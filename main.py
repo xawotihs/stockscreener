@@ -13,6 +13,14 @@ def fetch_stock_data(ticker):
     fiveYearAvgDividendYield = stock.info.get('fiveYearAvgDividendYield')
     dividendRate = stock.info.get('dividendRate')
     close = stock.info.get('previousClose')
+    fiftyDayAverage = info.get('fiftyDayAverage', '')
+    twoHundredDayAverage = info.get('twoHundredDayAverage', '')
+    if close is None or close == 'N/A':
+        close = 1
+    if fiftyDayAverage is None or fiftyDayAverage == '':
+        fiftyDayAverage = 1
+    if twoHundredDayAverage is None or twoHundredDayAverage == '':
+        twoHundredDayAverage = 1    
     if fiveYearAvgDividendYield is None or dividendRate is None or fiveYearAvgDividendYield == 'N/A':
         fiveYearAvgDividendYield = 0
         discount = 0
@@ -29,14 +37,16 @@ def fetch_stock_data(ticker):
             'sector': info.get('sector', ''),
             'dividend_streak': calculate_dividend_streak(stock),
             'dividend_yield': round(info.get('dividendYield', 0) * 100, 2),
-            '5y_Agv_dividend_yield': round(fiveYearAvgDividendYield, 2),
+            '5y_Avg_dividend_yield': round(fiveYearAvgDividendYield, 2),
             'payout_ratio': round(info.get('payoutRatio', 0), 2),
             'dividend_growth_rate': round(calculate_dividend_growth_rate(stock), 2),
             'eps': round(info.get('trailingEps', 0), 2),
             'pe_ratio': round(info.get('trailingPE', 0), 2),
             'debt_to_equity': round(info.get('debtToEquity', 0), 2),
             'roe': round(info.get('returnOnEquity', 0), 2),
-            'discount/premium':round(discount,2)
+            'discount/premium':round(discount,2),
+            '50d-SMA': round(((close - fiftyDayAverage)/close), 2), 
+            '200d-SMA': round(((close - twoHundredDayAverage)/close), 2),
         }
     except KeyError:
         return None
@@ -94,27 +104,39 @@ def filter_wrong_dividends(df):
 def calculate_dividend_streak(stock):
     dividends_df = stock.dividends.to_frame()
     filtered_dividends_df = filter_wrong_dividends(dividends_df)
-    dividends = dividends_df.squeeze()
+    dividends = filtered_dividends_df.squeeze()
 
     if type(dividends) != pd.Series :
         return 0
 
     resampled = dividends.resample('YE').sum()
-    if len(resampled) < 1:
+
+    #print(resampled.to_string())
+
+    #return 0 if there is no dividend data or if the last dividend happened more than 1 year ago
+    if (len(resampled) < 1) or (date.today() - resampled.index[-1].date() > pd.Timedelta(days=365)):
         return 0
     
-    prev = 0
     prevprev = 0
+    prev = 0
     ctr = 0
     for i in range(len(resampled)-1):
-        if resampled.iloc[i] >= prev:
-            ctr += 1
+        if (resampled.iloc[i] >= prev) and (prev > 0):
+            if (i == 0) or (resampled.index[i].date()- resampled.index[i-1].date() < pd.Timedelta(days=380)):
+                ctr += 1
         else:
             # try to support the case where there is exceptional dividends in the middle of a streak
-            if resampled.iloc[i] >= prevprev and prevprev > 0:
-                ctr += 1
+            if(i <= len(resampled)-1):
+                if ((resampled.iloc[i+1] > prev) and (prev > 0)) or ((resampled.iloc[i] > prevprev) and (prevprev > 0)):
+                    if (i == 0) or (resampled.index[i].date()- resampled.index[i-1].date() < pd.Timedelta(days=380)):
+                        ctr += 1
+                    else:
+                        ctr = 0
+                else:
+                    ctr = 0
             else:
                 ctr = 0
+        #print(ctr, resampled.index[i].date())
         prevprev = prev
         prev = resampled.iloc[i]
 
@@ -134,6 +156,7 @@ stock_df = pd.DataFrame(stock_data)
 # Calculate positive and negative metrics
 def calculate_metrics(row):
     positives = sum([
+        row['dividend_streak'] > 10,
         row['dividend_yield'] > 3,
         0.30 <= row['payout_ratio'] <= 0.60,
         row['dividend_growth_rate'] > 5,
@@ -143,7 +166,7 @@ def calculate_metrics(row):
         row['roe'] > 0.10,
         row['discount/premium'] < 0
     ])
-    negatives = 8 - positives
+    negatives = 9 - positives
     return positives, negatives
 
 stock_df[['positives', 'negatives']] = stock_df.apply(lambda row: calculate_metrics(row), axis=1, result_type="expand")
@@ -162,7 +185,9 @@ sorted_df = sorted_df.round(2)  # Round to two decimal places
 def highlight_metrics(row):
     colors = []
     for col in sorted_df.columns:
-        if col == 'dividend_yield':
+        if col == 'dividend_streak':
+            colors.append('background-color: green' if row[col] >= 10 else 'background-color: red')
+        elif col == 'dividend_yield':
             colors.append('background-color: green' if row[col] > 3 else 'background-color: red')
         elif col == 'payout_ratio':
             colors.append('background-color: green' if 0.30 <= row[col] <= 0.60 else 'background-color: red')
@@ -178,6 +203,10 @@ def highlight_metrics(row):
             colors.append('background-color: green' if row[col] > 0.10 else 'background-color: red')
         elif col == 'discount/premium':
             colors.append('background-color: green' if row[col] < 0 else 'background-color: red')
+        elif col == '50d-SMA':
+            colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
+        elif col == '200d-SMA':
+            colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         else:
             colors.append('')
     return colors
