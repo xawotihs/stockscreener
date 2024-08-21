@@ -2,7 +2,7 @@ import yfinance as yf
 import pandas as pd
 import streamlit as st
 import sys
-from datetime import date,datetime, timedelta
+from datetime import date, datetime, timedelta
 
 # Function to fetch stock data
 def fetch_stock_data(ticker):
@@ -42,6 +42,8 @@ def fetch_stock_data(ticker):
             'dividend_growth_rate': round(calculate_dividend_growth_rate(stock), 2),
             'eps': round(info.get('trailingEps', 0), 2),
             'pe_ratio': round(info.get('trailingPE', 0), 2),
+            'earning_growth': info.get('earningsGrowth', 0),
+            '5y_total_return': round(calculate_5y_total_return_rate(stock), 2),
             'debt_to_equity': round(info.get('debtToEquity', 0), 2),
             'roe': round(info.get('returnOnEquity', 0), 2),
             'discount/premium':round(discount,2),
@@ -50,6 +52,23 @@ def fetch_stock_data(ticker):
         }
     except KeyError:
         return None
+
+# Function to calculate 5y total return rate
+def calculate_5y_total_return_rate(stock):
+    current_time = datetime.now()
+    ctr = 5
+    while True:
+        fiveYearsAgo = current_time - timedelta(days = ctr*365+2)
+        endDate = fiveYearsAgo + timedelta(days=5)
+        df = stock.history(start=fiveYearsAgo.strftime("%Y-%m-%d"), end=endDate.strftime("%Y-%m-%d"), interval="1d")
+        if len(df)==0:
+            ctr -=1
+        else:
+            break
+
+    dividends = stock.dividends
+
+    return (dividends.loc[fiveYearsAgo.strftime("%Y-%m-%d"):current_time.strftime("%Y-%m-%d")].sum() + stock.info['previousClose'] - df.iloc[0]['Close'])/df.iloc[0]['Close']
 
 # Function to calculate dividend growth rate
 def calculate_dividend_growth_rate(stock):
@@ -155,18 +174,23 @@ stock_df = pd.DataFrame(stock_data)
 
 # Calculate positive and negative metrics
 def calculate_metrics(row):
+    stock = yf.Ticker('SPY')
+    spy_return = round(calculate_5y_total_return_rate(stock), 2)
+
     positives = sum([
         row['dividend_streak'] > 10,
-        row['dividend_yield'] > 3,
+        row['dividend_yield'] > 0,
         0.30 <= row['payout_ratio'] <= 0.60,
-        row['dividend_growth_rate'] > 5,
+        row['dividend_growth_rate'] > 10,
         row['eps'] > 0,
         row['pe_ratio'] < 20,
         row['debt_to_equity'] < 100,
         row['roe'] > 0.10,
-        row['discount/premium'] < 0
+        row['discount/premium'] < 0,
+        row['5y_total_return'] > spy_return,
+        row['earning_growth'] > 0
     ])
-    negatives = 9 - positives
+    negatives = 11 - positives
     return positives, negatives
 
 stock_df[['positives', 'negatives']] = stock_df.apply(lambda row: calculate_metrics(row), axis=1, result_type="expand")
@@ -188,11 +212,11 @@ def highlight_metrics(row):
         if col == 'dividend_streak':
             colors.append('background-color: green' if row[col] >= 10 else 'background-color: red')
         elif col == 'dividend_yield':
-            colors.append('background-color: green' if row[col] > 3 else 'background-color: red')
+            colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         elif col == 'payout_ratio':
             colors.append('background-color: green' if 0.30 <= row[col] <= 0.60 else 'background-color: red')
         elif col == 'dividend_growth_rate':
-            colors.append('background-color: green' if row[col] > 5 else 'background-color: red')
+            colors.append('background-color: green' if row[col] > 10 else 'background-color: red')
         elif col == 'eps':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         elif col == 'pe_ratio':
@@ -206,6 +230,12 @@ def highlight_metrics(row):
         elif col == '50d-SMA':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         elif col == '200d-SMA':
+            colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
+        elif col == '5y_total_return':
+            stock = yf.Ticker('SPY')
+            spy_return = round(calculate_5y_total_return_rate(stock), 2)
+            colors.append('background-color: green' if row[col] > spy_return else 'background-color: red')
+        elif col == 'earning_growth':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         else:
             colors.append('')
