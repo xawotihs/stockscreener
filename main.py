@@ -57,10 +57,51 @@ def fetch_stock_data(ticker):
 def calculate_5y_total_return_rate(stock):
     current_time = datetime.now()
     ctr = 5
+    initialRate = 1
+    endingRate = 1
     while True:
         fiveYearsAgo = current_time - timedelta(days = ctr*365+2)
         endDate = fiveYearsAgo + timedelta(days=5)
         df = stock.history(start=fiveYearsAgo.strftime("%Y-%m-%d"), end=endDate.strftime("%Y-%m-%d"), interval="1d")
+
+        if stock.info.get('currency') != 'USD':
+            if stock.info.get('currency') == 'GBp':
+                currency = yf.Ticker('GBPUSD=X')
+            elif stock.info.get('currency') == 'CHF':
+                currency = yf.Ticker('CHFUSD=X')
+            elif stock.info.get('currency') == 'EUR':
+                currency = yf.Ticker('EURUSD=X')
+            elif stock.info.get('currency') == 'TWD':
+                currency = yf.Ticker('TWDUSD=X')
+            elif stock.info.get('currency') == 'DKK':
+                currency = yf.Ticker('DKKUSD=X')
+            elif stock.info.get('currency') == 'KRW':
+                currency = yf.Ticker('KRWUSD=X')
+            elif stock.info.get('currency') == 'HKD':
+                currency = yf.Ticker('HKDUSD=X')
+            elif stock.info.get('currency') == 'JPY':
+                currency = yf.Ticker('JPYUSD=X')
+            elif stock.info.get('currency') == 'CAD':
+                currency = yf.Ticker('CADUSD=X')
+            elif stock.info.get('currency') == 'AUD':
+                currency = yf.Ticker('AUDUSD=X')
+            elif stock.info.get('currency') == 'SEK':
+                currency = yf.Ticker('SEKUSD=X')
+            elif stock.info.get('currency') == 'SGD':
+                currency = yf.Ticker('SGDUSD=X')
+            elif stock.info.get('currency') == 'ILA':
+                currency = yf.Ticker('ILSUSD=X')
+            elif stock.info.get('currency') == 'NOK':
+                currency = yf.Ticker('NOKUSD=X')
+            elif stock.info.get('currency') == 'NZD':
+                currency = yf.Ticker('NZDUSD=X')
+            else:
+                print("Unknown currency: " + stock.info.get('currency'))
+
+            df_currency = currency.history(start=fiveYearsAgo.strftime("%Y-%m-%d"), end=endDate.strftime("%Y-%m-%d"), interval="1d")
+            initialRate = df_currency.iloc[0]['Close']
+            endingRate = currency.info['previousClose']
+
         if len(df)==0:
             ctr -=1
         else:
@@ -68,7 +109,11 @@ def calculate_5y_total_return_rate(stock):
 
     dividends = stock.dividends
 
-    return (dividends.loc[fiveYearsAgo.strftime("%Y-%m-%d"):current_time.strftime("%Y-%m-%d")].sum() + stock.info['previousClose'] - df.iloc[0]['Close'])/df.iloc[0]['Close']
+    return (
+        (dividends.loc[fiveYearsAgo.strftime("%Y-%m-%d"):current_time.strftime("%Y-%m-%d")].sum()*(endingRate+initialRate)/2) + 
+        (endingRate*stock.info['previousClose']) -
+        (initialRate*df.iloc[0]['Close'])
+            )/(df.iloc[0]['Close']*initialRate)
 
 # Function to calculate dividend growth rate
 def calculate_dividend_growth_rate(stock):
@@ -129,8 +174,6 @@ def calculate_dividend_streak(stock):
         return 0
 
     resampled = dividends.resample('YE').sum()
-
-    #print(resampled.to_string())
 
     #return 0 if there is no dividend data or if the last dividend happened more than 1 year ago
     if (len(resampled) < 1) or (date.today() - resampled.index[-1].date() > pd.Timedelta(days=365)):
