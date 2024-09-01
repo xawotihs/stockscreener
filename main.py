@@ -3,11 +3,12 @@ import pandas as pd
 import streamlit as st
 import sys
 from datetime import date, datetime, timedelta
+import requests_cache
 
 # Function to fetch stock data
-def fetch_stock_data(ticker):
+def fetch_stock_data(ticker, session):
     print(f'Fetching data for {ticker}')
-    stock = yf.Ticker(ticker)
+    stock = yf.Ticker(ticker, session=session)
     info = stock.info
 
     fiveYearAvgDividendYield = stock.info.get('fiveYearAvgDividendYield')
@@ -43,7 +44,7 @@ def fetch_stock_data(ticker):
             'eps': round(info.get('trailingEps', 0), 2),
             'pe_ratio': round(info.get('trailingPE', 0), 2),
             'earning_growth': info.get('earningsGrowth', 0),
-            '5y_total_return': round(calculate_5y_total_return_rate(stock), 2),
+            '5y_total_return': round(calculate_5y_total_return_rate(stock, session), 2),
             'debt_to_equity': round(info.get('debtToEquity', 0), 2),
             'roe': round(info.get('returnOnEquity', 0), 2),
             'discount/premium':round(discount,2),
@@ -54,7 +55,7 @@ def fetch_stock_data(ticker):
         return None
 
 # Function to calculate 5y total return rate
-def calculate_5y_total_return_rate(stock):
+def calculate_5y_total_return_rate(stock, session):
     current_time = datetime.now()
     ctr = 5
     initialRate = 1
@@ -66,35 +67,35 @@ def calculate_5y_total_return_rate(stock):
 
         if stock.info.get('currency') != 'USD':
             if stock.info.get('currency') == 'GBp':
-                currency = yf.Ticker('GBPUSD=X')
+                currency = yf.Ticker('GBPUSD=X', session=session)
             elif stock.info.get('currency') == 'CHF':
-                currency = yf.Ticker('CHFUSD=X')
+                currency = yf.Ticker('CHFUSD=X', session=session)
             elif stock.info.get('currency') == 'EUR':
-                currency = yf.Ticker('EURUSD=X')
+                currency = yf.Ticker('EURUSD=X', session=session)
             elif stock.info.get('currency') == 'TWD':
-                currency = yf.Ticker('TWDUSD=X')
+                currency = yf.Ticker('TWDUSD=X', session=session)
             elif stock.info.get('currency') == 'DKK':
-                currency = yf.Ticker('DKKUSD=X')
+                currency = yf.Ticker('DKKUSD=X', session=session)
             elif stock.info.get('currency') == 'KRW':
-                currency = yf.Ticker('KRWUSD=X')
+                currency = yf.Ticker('KRWUSD=X', session=session)
             elif stock.info.get('currency') == 'HKD':
-                currency = yf.Ticker('HKDUSD=X')
+                currency = yf.Ticker('HKDUSD=X', session=session)
             elif stock.info.get('currency') == 'JPY':
-                currency = yf.Ticker('JPYUSD=X')
+                currency = yf.Ticker('JPYUSD=X', session=session)
             elif stock.info.get('currency') == 'CAD':
-                currency = yf.Ticker('CADUSD=X')
+                currency = yf.Ticker('CADUSD=X', session=session)
             elif stock.info.get('currency') == 'AUD':
-                currency = yf.Ticker('AUDUSD=X')
+                currency = yf.Ticker('AUDUSD=X', session=session)
             elif stock.info.get('currency') == 'SEK':
-                currency = yf.Ticker('SEKUSD=X')
+                currency = yf.Ticker('SEKUSD=X', session=session)
             elif stock.info.get('currency') == 'SGD':
-                currency = yf.Ticker('SGDUSD=X')
+                currency = yf.Ticker('SGDUSD=X', session=session)
             elif stock.info.get('currency') == 'ILA':
-                currency = yf.Ticker('ILSUSD=X')
+                currency = yf.Ticker('ILSUSD=X', session=session)
             elif stock.info.get('currency') == 'NOK':
-                currency = yf.Ticker('NOKUSD=X')
+                currency = yf.Ticker('NOKUSD=X', session=session)
             elif stock.info.get('currency') == 'NZD':
-                currency = yf.Ticker('NZDUSD=X')
+                currency = yf.Ticker('NZDUSD=X', session=session)
             else:
                 print("Unknown currency: " + stock.info.get('currency'))
 
@@ -110,7 +111,8 @@ def calculate_5y_total_return_rate(stock):
     dividends = stock.dividends
 
     return (
-        (dividends.loc[fiveYearsAgo.strftime("%Y-%m-%d"):current_time.strftime("%Y-%m-%d")].sum()*(endingRate+initialRate)/2) + 
+        # using avg of rate for dividends and 40% tax, 0% tax for capital gain
+        (dividends.loc[fiveYearsAgo.strftime("%Y-%m-%d"):current_time.strftime("%Y-%m-%d")].sum()*(endingRate+initialRate)/2)*0.6 + 
         (endingRate*stock.info['previousClose']) -
         (initialRate*df.iloc[0]['Close'])
             )/(df.iloc[0]['Close']*initialRate)
@@ -210,15 +212,18 @@ def read_stock_tickers(file_path):
         return [line.strip() for line in file]
 
 # Fetch data for stocks
+session = requests_cache.CachedSession('yfinance.cache')
+session.headers['User-agent'] = 'my-screener/1.0'
+
 stock_tickers = read_stock_tickers(sys.argv[1])
-stock_data = [fetch_stock_data(ticker) for ticker in stock_tickers]
+stock_data = [fetch_stock_data(ticker, session) for ticker in stock_tickers]
 stock_data = [data for data in stock_data if data is not None]  # Filter out stocks with missing data
 stock_df = pd.DataFrame(stock_data)
 
 # Calculate positive and negative metrics
-def calculate_metrics(row):
-    stock = yf.Ticker('SPY')
-    spy_return = round(calculate_5y_total_return_rate(stock), 2)
+def calculate_metrics(row, session):
+    stock = yf.Ticker('SPY', session=session)
+    spy_return = round(calculate_5y_total_return_rate(stock, session), 2)
 
     positives = sum([
         row['dividend_streak'] > 10,
@@ -236,7 +241,7 @@ def calculate_metrics(row):
     negatives = 11 - positives
     return positives, negatives
 
-stock_df[['positives', 'negatives']] = stock_df.apply(lambda row: calculate_metrics(row), axis=1, result_type="expand")
+stock_df[['positives', 'negatives']] = stock_df.apply(lambda row: calculate_metrics(row,session), axis=1, result_type="expand")
 
 # Streamlit interface
 st.title("Dividend Stock Screener")
@@ -249,7 +254,7 @@ sorted_df = sorted_df.dropna()  # Remove rows with any missing data
 sorted_df = sorted_df.round(2)  # Round to two decimal places
 
 # Highlight positive and negative metrics
-def highlight_metrics(row):
+def highlight_metrics(row, session):
     colors = []
     for col in sorted_df.columns:
         if col == 'dividend_streak':
@@ -275,8 +280,8 @@ def highlight_metrics(row):
         elif col == '200d-SMA':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         elif col == '5y_total_return':
-            stock = yf.Ticker('SPY')
-            spy_return = round(calculate_5y_total_return_rate(stock), 2)
+            stock = yf.Ticker('SPY', session=session)
+            spy_return = round(calculate_5y_total_return_rate(stock, session), 2)
             colors.append('background-color: green' if row[col] > spy_return else 'background-color: red')
         elif col == 'earning_growth':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
@@ -285,4 +290,4 @@ def highlight_metrics(row):
     return colors
 
 # Remove the index column
-st.dataframe(sorted_df.style.apply(highlight_metrics, axis=1))
+st.dataframe(sorted_df.style.apply(highlight_metrics, axis=1, args=(session,)))
