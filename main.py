@@ -117,6 +117,14 @@ def calculate_5y_total_return_rate(stock, session):
                 currency = yf.Ticker('NZDUSD=X', session=session)
             elif stock.info.get('currency') == 'INR':
                 currency = yf.Ticker('INRUSD=X', session=session)
+            elif stock.info.get('currency') == 'SAR':
+                currency = yf.Ticker('SARUSD=X', session=session)
+            elif stock.info.get('currency') == 'BRL':
+                currency = yf.Ticker('SARUSD=X', session=session)
+            elif stock.info.get('currency') == 'ZAc':
+                currency = yf.Ticker('ZARUSD=X', session=session)
+            elif stock.info.get('currency') == 'IDR':
+                currency = yf.Ticker('IDRUSD=X', session=session)
             else:
                 print("Unknown currency: " + stock.info.get('currency'))
 
