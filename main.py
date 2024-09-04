@@ -4,6 +4,12 @@ import streamlit as st
 import sys
 from datetime import date, datetime, timedelta
 import requests_cache
+from pandas.api.types import (
+    is_categorical_dtype,
+    is_datetime64_any_dtype,
+    is_numeric_dtype,
+    is_object_dtype,
+)
 
 # Function to fetch stock data
 def fetch_stock_data(ticker, session):
@@ -18,10 +24,6 @@ def fetch_stock_data(ticker, session):
     twoHundredDayAverage = info.get('twoHundredDayAverage', '')
     if close is None or close == 'N/A':
         close = 1
-    if fiftyDayAverage is None or fiftyDayAverage == '':
-        fiftyDayAverage = 1
-    if twoHundredDayAverage is None or twoHundredDayAverage == '':
-        twoHundredDayAverage = 1    
     if fiveYearAvgDividendYield is None or dividendRate is None or fiveYearAvgDividendYield == 'N/A':
         fiveYearAvgDividendYield = 0
         discount = 0
@@ -36,6 +38,7 @@ def fetch_stock_data(ticker, session):
             'ticker': ticker,
             'name': info.get('shortName', ''),
             'sector': info.get('sector', ''),
+            'country': info.get('country', ''),
             'dividend_streak': calculate_dividend_streak(stock),
             'dividend_yield': round(info.get('dividendYield', 0) * 100, 2),
             '5y_Avg_dividend_yield': round(fiveYearAvgDividendYield, 2),
@@ -48,11 +51,27 @@ def fetch_stock_data(ticker, session):
             'debt_to_equity': round(info.get('debtToEquity', 0), 2),
             'roe': round(info.get('returnOnEquity', 0), 2),
             'discount/premium':round(discount,2),
-            '50d-SMA': round(((close - fiftyDayAverage)/close), 2), 
-            '200d-SMA': round(((close - twoHundredDayAverage)/close), 2),
+            'w13612': round(calculate_13612W(stock), 2),
         }
     except KeyError:
         return None
+
+# Function to calculate w13612 momentum
+def calculate_13612W(stock):
+    current_time = datetime.now()
+    until = current_time - timedelta(days = 365+2)
+
+    df = stock.history(start=until.strftime("%Y-%m-%d"), end=current_time.strftime("%Y-%m-%d"), interval="1d")
+    dfmonthly = df.groupby([pd.Grouper(freq = 'ME')]).last()
+
+    w13612 = ((dfmonthly['Close']/dfmonthly['Close'].shift(1)-1)*12+
+                (dfmonthly['Close']/dfmonthly['Close'].shift(3)-1)*4+
+                (dfmonthly['Close']/dfmonthly['Close'].shift(6)-1)*2+
+                (dfmonthly['Close']/dfmonthly['Close'].shift(12)-1))/4
+
+    return w13612.iloc[-1]
+
+
 
 # Function to calculate 5y total return rate
 def calculate_5y_total_return_rate(stock, session):
@@ -208,19 +227,87 @@ def calculate_dividend_streak(stock):
 
     return ctr
 
+def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Adds a UI on top of a dataframe to let viewers filter columns
+
+    Args:
+        df (pd.DataFrame): Original dataframe
+
+    Returns:
+        pd.DataFrame: Filtered dataframe
+    """
+    modify = st.checkbox("Add filters")
+
+    if not modify:
+        return df
+
+    df = df.copy()
+
+    # Try to convert datetimes into a standard format (datetime, no timezone)
+    for col in df.columns:
+        if is_object_dtype(df[col]):
+            try:
+                df[col] = pd.to_datetime(df[col])
+            except Exception:
+                pass
+
+        if is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.tz_localize(None)
+
+    modification_container = st.container()
+
+    with modification_container:
+        to_filter_columns = st.multiselect("Filter dataframe on", df.columns)
+        for column in to_filter_columns:
+            left, right = st.columns((1, 20))
+            left.write("↳")
+            # Treat columns with < 10 unique values as categorical
+            if is_categorical_dtype(df[column]) or df[column].nunique() < 10:
+                user_cat_input = right.multiselect(
+                    f"Values for {column}",
+                    df[column].unique(),
+                    default=list(df[column].unique()),
+                )
+                df = df[df[column].isin(user_cat_input)]
+            elif is_numeric_dtype(df[column]):
+                _min = float(df[column].min())
+                _max = float(df[column].max())
+                step = (_max - _min) / 100
+                user_num_input = right.slider(
+                    f"Values for {column}",
+                    _min,
+                    _max,
+                    (_min, _max),
+                    step=step,
+                )
+                df = df[df[column].between(*user_num_input)]
+            elif is_datetime64_any_dtype(df[column]):
+                user_date_input = right.date_input(
+                    f"Values for {column}",
+                    value=(
+                        df[column].min(),
+                        df[column].max(),
+                    ),
+                )
+                if len(user_date_input) == 2:
+                    user_date_input = tuple(map(pd.to_datetime, user_date_input))
+                    start_date, end_date = user_date_input
+                    df = df.loc[df[column].between(start_date, end_date)]
+            else:
+                user_text_input = right.text_input(
+                    f"Substring or regex in {column}",
+                )
+                if user_text_input:
+                    df = df[df[column].str.contains(user_text_input)]
+
+    return df
+
 # Read stock tickers from file
 def read_stock_tickers(file_path):
     with open(file_path, 'r') as file:
         return [line.strip() for line in file]
 
-# Fetch data for stocks
-session = requests_cache.CachedSession('yfinance.cache')
-session.headers['User-agent'] = 'my-screener/1.0'
-
-stock_tickers = read_stock_tickers(sys.argv[1])
-stock_data = [fetch_stock_data(ticker, session) for ticker in stock_tickers]
-stock_data = [data for data in stock_data if data is not None]  # Filter out stocks with missing data
-stock_df = pd.DataFrame(stock_data)
 
 # Calculate positive and negative metrics
 def calculate_metrics(row, session):
@@ -238,27 +325,15 @@ def calculate_metrics(row, session):
         row['roe'] > 0.10,
         row['discount/premium'] < 0,
         row['5y_total_return'] > spy_return,
-        row['earning_growth'] > 0
+        row['earning_growth'] > 0,
+        row['w13612'] > 0
     ])
-    negatives = 11 - positives
-    return positives, negatives
-
-stock_df[['positives', 'negatives']] = stock_df.apply(lambda row: calculate_metrics(row,session), axis=1, result_type="expand")
-
-# Streamlit interface
-st.title("Dividend Stock Screener")
-
-st.write("Select sorting criteria:")
-criteria = st.selectbox("Sort by", ["Dividend Yield", "Payout Ratio", "Dividend Growth Rate", "EPS", "P/E Ratio", "Debt-to-Equity Ratio", "ROE", "positives"])
-
-sorted_df = stock_df.sort_values(by=criteria.replace(" ", "_").lower(), ascending=False)
-sorted_df = sorted_df.dropna()  # Remove rows with any missing data
-sorted_df = sorted_df.round(2)  # Round to two decimal places
+    return positives
 
 # Highlight positive and negative metrics
-def highlight_metrics(row, session):
+def highlight_metrics(row, session, df):
     colors = []
-    for col in sorted_df.columns:
+    for col in df.columns:
         if col == 'dividend_streak':
             colors.append('background-color: green' if row[col] >= 10 else 'background-color: red')
         elif col == 'dividend_yield':
@@ -281,6 +356,8 @@ def highlight_metrics(row, session):
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         elif col == '200d-SMA':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
+        elif col == 'w13612':
+            colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         elif col == '5y_total_return':
             stock = yf.Ticker('SPY', session=session)
             spy_return = round(calculate_5y_total_return_rate(stock, session), 2)
@@ -291,5 +368,38 @@ def highlight_metrics(row, session):
             colors.append('')
     return colors
 
-# Remove the index column
-st.dataframe(sorted_df.style.apply(highlight_metrics, axis=1, args=(session,)))
+
+@st.cache_resource(ttl=3600*24)
+def load_session():
+    session = requests_cache.CachedSession('yfinance.cache')
+    session.headers['User-agent'] = 'my-screener/1.0'
+    return session
+    
+
+@st.cache_data(ttl=3600*24)
+def load_data(ticker_file, _session):
+    stock_tickers = read_stock_tickers(ticker_file)
+    stock_data = [fetch_stock_data(ticker, _session) for ticker in stock_tickers]
+    stock_data = [data for data in stock_data if data is not None]  # Filter out stocks with missing data
+    stock_df = pd.DataFrame(stock_data)
+
+    stock_df['Score'] = stock_df.apply(lambda row: calculate_metrics(row,_session), axis=1, result_type="expand")
+
+    sorted_df = stock_df.dropna()  # Remove rows with any missing data
+    sorted_df = sorted_df.round(2)  # Round to two decimal places
+
+    return sorted_df
+
+def main():
+    st.set_page_config(page_title="Stock Screener", layout="wide")
+    st.title("Stock Screener")
+
+    session = load_session()
+    sorted_df = load_data(sys.argv[1], session)
+    
+    df = filter_dataframe(sorted_df)
+    st.dataframe(df.style.apply(highlight_metrics, axis=1, args=(session,df,)), use_container_width = True)
+
+
+if __name__ == "__main__":
+    main()
