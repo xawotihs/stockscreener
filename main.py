@@ -1,4 +1,4 @@
-import yfinance as yf
+import yfinance_cache as yfc
 import pandas as pd
 import streamlit as st
 import sys
@@ -11,10 +11,15 @@ from pandas.api.types import (
     is_object_dtype,
 )
 
+progress_bar = None
+stock_tickers_amount = 0
+
+
 # Function to fetch stock data
-def fetch_stock_data(ticker, session):
-    print(f'Fetching data for {ticker}')
-    stock = yf.Ticker(ticker, session=session)
+def fetch_stock_data(ticker, percent_complete):
+    progress_bar.progress(percent_complete, text=f'Fetching data for {ticker}')
+
+    stock = yfc.Ticker(ticker)
     info = stock.info
 
     fiveYearAvgDividendYield = stock.info.get('fiveYearAvgDividendYield')
@@ -47,7 +52,7 @@ def fetch_stock_data(ticker, session):
             'eps': round(info.get('trailingEps', 0), 2),
             'pe_ratio': round(info.get('trailingPE', 0), 2),
             'earning_growth': info.get('earningsGrowth', 0),
-            '5y_total_return': round(calculate_5y_total_return_rate(stock, session), 2),
+            '5y_total_return': round(calculate_5y_total_return_rate(stock), 2),
             'debt_to_equity': round(info.get('debtToEquity', 0), 2),
             'roe': round(info.get('returnOnEquity', 0), 2),
             'discount/premium':round(discount,2),
@@ -61,98 +66,102 @@ def calculate_13612W(stock):
     current_time = datetime.now()
     until = current_time - timedelta(days = 365+2)
 
-    df = stock.history(start=until.strftime("%Y-%m-%d"), end=current_time.strftime("%Y-%m-%d"), interval="1d")
-    dfmonthly = df.groupby([pd.Grouper(freq = 'ME')]).last()
+    try:
+        df = stock.history(start=until.strftime("%Y-%m-%d"), end=current_time.strftime("%Y-%m-%d"), interval="1d")
+        dfmonthly = df.groupby([pd.Grouper(freq = 'ME')]).last()
 
-    w13612 = ((dfmonthly['Close']/dfmonthly['Close'].shift(1)-1)*12+
-                (dfmonthly['Close']/dfmonthly['Close'].shift(3)-1)*4+
-                (dfmonthly['Close']/dfmonthly['Close'].shift(6)-1)*2+
-                (dfmonthly['Close']/dfmonthly['Close'].shift(12)-1))/4
+        w13612 = ((dfmonthly['Close']/dfmonthly['Close'].shift(1)-1)*12+
+                    (dfmonthly['Close']/dfmonthly['Close'].shift(3)-1)*4+
+                    (dfmonthly['Close']/dfmonthly['Close'].shift(6)-1)*2+
+                    (dfmonthly['Close']/dfmonthly['Close'].shift(12)-1))/4
 
-    return w13612.iloc[-1]
+        return w13612.iloc[-1]
+    except Exception:
+        return -100
 
 
-
-# Function to calculate 5y total return rate
-def calculate_5y_total_return_rate(stock, session):
+# Function to calculate 5y total return rate in $
+def calculate_5y_total_return_rate(stock):
     current_time = datetime.now()
     ctr = 5
     initialRate = 1
     endingRate = 1
-    while True:
+    # assign old price to current price, just to be safe with failing APIs
+    stock_price_5y_ago = stock.info['previousClose']
+    while ctr > 0:
         fiveYearsAgo = current_time - timedelta(days = ctr*365+2)
         endDate = fiveYearsAgo + timedelta(days=5)
-        df = stock.history(start=fiveYearsAgo.strftime("%Y-%m-%d"), end=endDate.strftime("%Y-%m-%d"), interval="1d")
+        try:
+            df = stock.history(start=fiveYearsAgo.strftime("%Y-%m-%d"), end=endDate.strftime("%Y-%m-%d"), interval="1d")
+            stock_price_5y_ago = df.iloc[0]['Close']
 
-        if stock.info.get('currency') != 'USD':
-            if stock.info.get('currency') == 'GBp':
-                currency = yf.Ticker('GBPUSD=X', session=session)
-            elif stock.info.get('currency') == 'CHF':
-                currency = yf.Ticker('CHFUSD=X', session=session)
-            elif stock.info.get('currency') == 'EUR':
-                currency = yf.Ticker('EURUSD=X', session=session)
-            elif stock.info.get('currency') == 'TWD':
-                currency = yf.Ticker('TWDUSD=X', session=session)
-            elif stock.info.get('currency') == 'DKK':
-                currency = yf.Ticker('DKKUSD=X', session=session)
-            elif stock.info.get('currency') == 'KRW':
-                currency = yf.Ticker('KRWUSD=X', session=session)
-            elif stock.info.get('currency') == 'HKD':
-                currency = yf.Ticker('HKDUSD=X', session=session)
-            elif stock.info.get('currency') == 'JPY':
-                currency = yf.Ticker('JPYUSD=X', session=session)
-            elif stock.info.get('currency') == 'CAD':
-                currency = yf.Ticker('CADUSD=X', session=session)
-            elif stock.info.get('currency') == 'AUD':
-                currency = yf.Ticker('AUDUSD=X', session=session)
-            elif stock.info.get('currency') == 'SEK':
-                currency = yf.Ticker('SEKUSD=X', session=session)
-            elif stock.info.get('currency') == 'SGD':
-                currency = yf.Ticker('SGDUSD=X', session=session)
-            elif stock.info.get('currency') == 'ILA':
-                currency = yf.Ticker('ILSUSD=X', session=session)
-            elif stock.info.get('currency') == 'NOK':
-                currency = yf.Ticker('NOKUSD=X', session=session)
-            elif stock.info.get('currency') == 'NZD':
-                currency = yf.Ticker('NZDUSD=X', session=session)
-            elif stock.info.get('currency') == 'INR':
-                currency = yf.Ticker('INRUSD=X', session=session)
-            elif stock.info.get('currency') == 'SAR':
-                currency = yf.Ticker('SARUSD=X', session=session)
-            elif stock.info.get('currency') == 'BRL':
-                currency = yf.Ticker('SARUSD=X', session=session)
-            elif stock.info.get('currency') == 'ZAc':
-                currency = yf.Ticker('ZARUSD=X', session=session)
-            elif stock.info.get('currency') == 'IDR':
-                currency = yf.Ticker('IDRUSD=X', session=session)
-            elif stock.info.get('currency') == 'IDR':
-                currency = yf.Ticker('IDRUSD=X', session=session)
-            elif stock.info.get('currency') == 'KWF':
-                currency = yf.Ticker('KWDUSD=X', session=session)
-            else:
-                print("Unknown currency: " + stock.info.get('currency'))
+            if stock.info.get('currency') != 'USD':
+                if stock.info.get('currency') == 'GBp':
+                    currency = yfc.Ticker('GBPUSD=X')
+                elif stock.info.get('currency') == 'CHF':
+                    currency = yfc.Ticker('CHFUSD=X')
+                elif stock.info.get('currency') == 'EUR':
+                    currency = yfc.Ticker('EURUSD=X')
+                elif stock.info.get('currency') == 'TWD':
+                    currency = yfc.Ticker('TWDUSD=X')
+                elif stock.info.get('currency') == 'DKK':
+                    currency = yfc.Ticker('DKKUSD=X')
+                elif stock.info.get('currency') == 'KRW':
+                    currency = yfc.Ticker('KRWUSD=X')
+                elif stock.info.get('currency') == 'HKD':
+                    currency = yfc.Ticker('HKDUSD=X')
+                elif stock.info.get('currency') == 'JPY':
+                    currency = yfc.Ticker('JPYUSD=X')
+                elif stock.info.get('currency') == 'CAD':
+                    currency = yfc.Ticker('CADUSD=X')
+                elif stock.info.get('currency') == 'AUD':
+                    currency = yfc.Ticker('AUDUSD=X')
+                elif stock.info.get('currency') == 'SEK':
+                    currency = yfc.Ticker('SEKUSD=X')
+                elif stock.info.get('currency') == 'SGD':
+                    currency = yfc.Ticker('SGDUSD=X')
+                elif stock.info.get('currency') == 'ILA':
+                    currency = yfc.Ticker('ILSUSD=X')
+                elif stock.info.get('currency') == 'NOK':
+                    currency = yfc.Ticker('NOKUSD=X')
+                elif stock.info.get('currency') == 'NZD':
+                    currency = yfc.Ticker('NZDUSD=X')
+                elif stock.info.get('currency') == 'INR':
+                    currency = yfc.Ticker('INRUSD=X')
+                elif stock.info.get('currency') == 'SAR':
+                    currency = yfc.Ticker('SARUSD=X')
+                elif stock.info.get('currency') == 'BRL':
+                    currency = yfc.Ticker('SARUSD=X')
+                elif stock.info.get('currency') == 'ZAc':
+                    currency = yfc.Ticker('ZARUSD=X')
+                elif stock.info.get('currency') == 'IDR':
+                    currency = yfc.Ticker('IDRUSD=X')
+                elif stock.info.get('currency') == 'IDR':
+                    currency = yfc.Ticker('IDRUSD=X')
+                elif stock.info.get('currency') == 'KWF':
+                    currency = yfc.Ticker('KWDUSD=X')
+                else:
+                    print("Unknown currency: " + stock.info.get('currency'))
 
-            df_currency = currency.history(start=fiveYearsAgo.strftime("%Y-%m-%d"), end=endDate.strftime("%Y-%m-%d"), interval="1d")
-            initialRate = df_currency.iloc[0]['Close']
-            endingRate = currency.info['previousClose']
-
-        if len(df)==0:
+                df_currency = currency.history(start=fiveYearsAgo.strftime("%Y-%m-%d"), end=endDate.strftime("%Y-%m-%d"), interval="1d")
+                initialRate = df_currency.iloc[0]['Close']
+                endingRate = currency.info['previousClose']
+            ctr = 0
+        except Exception:
             ctr -=1
-        else:
-            break
 
-    dividends = stock.dividends
+    dividends = stock.dat.dividends
 
     return (
         # using avg of rate for dividends and 40% tax, 0% tax for capital gain
         (dividends.loc[fiveYearsAgo.strftime("%Y-%m-%d"):current_time.strftime("%Y-%m-%d")].sum()*(endingRate+initialRate)/2)*0.6 + 
         (endingRate*stock.info['previousClose']) -
-        (initialRate*df.iloc[0]['Close'])
-            )/(df.iloc[0]['Close']*initialRate)
+        (initialRate*stock_price_5y_ago)
+            )/(stock_price_5y_ago*initialRate)
 
 # Function to calculate dividend growth rate
 def calculate_dividend_growth_rate(stock):
-    dividends = stock.dividends
+    dividends = stock.dat.dividends
 
     resampled = dividends.resample('YE').sum()
     if len(resampled) < 1:
@@ -201,7 +210,7 @@ def filter_wrong_dividends(df):
 
 # Function to calculate dividend streak
 def calculate_dividend_streak(stock):
-    dividends_df = stock.dividends.to_frame()
+    dividends_df = stock.dat.dividends.to_frame()
     filtered_dividends_df = filter_wrong_dividends(dividends_df)
     dividends = filtered_dividends_df.squeeze()
 
@@ -322,9 +331,7 @@ def read_stock_tickers(file_path):
 
 
 # Calculate positive and negative metrics
-def calculate_metrics(row, session):
-    stock = yf.Ticker('SPY', session=session)
-    spy_return = round(calculate_5y_total_return_rate(stock, session), 2)
+def calculate_metrics(row, spy_return):
 
     positives = sum([
         row['dividend_streak'] > 10,
@@ -343,7 +350,7 @@ def calculate_metrics(row, session):
     return positives
 
 # Highlight positive and negative metrics
-def highlight_metrics(row, session, df):
+def highlight_metrics(row, df):
     colors = []
     for col in df.columns:
         if col == 'dividend_streak':
@@ -371,8 +378,8 @@ def highlight_metrics(row, session, df):
         elif col == 'w13612':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         elif col == '5y_total_return':
-            stock = yf.Ticker('SPY', session=session)
-            spy_return = round(calculate_5y_total_return_rate(stock, session), 2)
+            stock = yfc.Ticker('SPY')
+            spy_return = round(calculate_5y_total_return_rate(stock), 2)
             colors.append('background-color: green' if row[col] > spy_return else 'background-color: red')
         elif col == 'earning_growth':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
@@ -380,22 +387,26 @@ def highlight_metrics(row, session, df):
             colors.append('')
     return colors
 
-
-@st.cache_resource(ttl=3600*24)
-def load_session():
-    session = requests_cache.CachedSession('yfinance.cache')
-    session.headers['User-agent'] = 'my-screener/1.0'
-    return session
     
 
 @st.cache_data(ttl=3600*24)
-def load_data(ticker_file, _session):
+def load_data(ticker_file):
     stock_tickers = read_stock_tickers(ticker_file)
-    stock_data = [fetch_stock_data(ticker, _session) for ticker in stock_tickers]
+    stock_tickers_amount = len(stock_tickers)
+
+    ctr = 0
+    stock_data = []
+    for ticker in stock_tickers:
+        stock_data.append(fetch_stock_data(ticker, ctr/stock_tickers_amount))
+        ctr+=1
+
     stock_data = [data for data in stock_data if data is not None]  # Filter out stocks with missing data
     stock_df = pd.DataFrame(stock_data)
 
-    stock_df['Score'] = stock_df.apply(lambda row: calculate_metrics(row,_session), axis=1, result_type="expand")
+    stock = yfc.Ticker('SPY')
+    spy_return = round(calculate_5y_total_return_rate(stock), 2)
+
+    stock_df['Score'] = stock_df.apply(lambda row: calculate_metrics(row, spy_return), axis=1, result_type="expand")
 
     sorted_df = stock_df.dropna()  # Remove rows with any missing data
     sorted_df = sorted_df.round(2)  # Round to two decimal places
@@ -405,12 +416,15 @@ def load_data(ticker_file, _session):
 def main():
     st.set_page_config(page_title="Stock Screener", layout="wide")
     st.title("Stock Screener")
+    global progress_bar
+    progress_bar = st.progress(0, text="Operation in progress. Please wait.")
 
-    session = load_session()
-    sorted_df = load_data(sys.argv[1], session)
+    sorted_df = load_data(sys.argv[1])
+
+    progress_bar.empty()
     
     df = filter_dataframe(sorted_df)
-    st.dataframe(df.style.apply(highlight_metrics, axis=1, args=(session,df,)), use_container_width = True)
+    st.dataframe(df.style.apply(highlight_metrics, axis=1, args=(df,)), use_container_width = True)
 
 
 if __name__ == "__main__":
