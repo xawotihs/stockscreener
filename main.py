@@ -350,7 +350,7 @@ def calculate_metrics(row, spy_return):
     return positives
 
 # Highlight positive and negative metrics
-def highlight_metrics(row, df):
+def highlight_metrics(row, df, spy_return):
     colors = []
     for col in df.columns:
         if col == 'dividend_streak':
@@ -378,8 +378,6 @@ def highlight_metrics(row, df):
         elif col == 'w13612':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
         elif col == '5y_total_return':
-            stock = yfc.Ticker('SPY')
-            spy_return = round(calculate_5y_total_return_rate(stock), 2)
             colors.append('background-color: green' if row[col] > spy_return else 'background-color: red')
         elif col == 'earning_growth':
             colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
@@ -411,7 +409,7 @@ def load_data(ticker_file):
     sorted_df = stock_df.dropna()  # Remove rows with any missing data
     sorted_df = sorted_df.round(2)  # Round to two decimal places
 
-    return sorted_df
+    return (sorted_df, spy_return)
 
 def main():
     st.set_page_config(page_title="Stock Screener", layout="wide")
@@ -419,12 +417,12 @@ def main():
     global progress_bar
     progress_bar = st.progress(0, text="Operation in progress. Please wait.")
 
-    sorted_df = load_data(sys.argv[1])
+    (sorted_df, spy_return) = load_data(sys.argv[1])
 
     progress_bar.empty()
     
     df = filter_dataframe(sorted_df)
-    st.dataframe(df.style.apply(highlight_metrics, axis=1, args=(df,)), use_container_width = True)
+    st.dataframe(df.style.apply(highlight_metrics, axis=1, args=(df,spy_return)), use_container_width = True)
 
 
 if __name__ == "__main__":
