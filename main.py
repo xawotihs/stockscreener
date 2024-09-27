@@ -43,6 +43,7 @@ def fetch_stock_data(ticker, percent_complete):
             'ticker': ticker,
             'name': info.get('shortName', ''),
             'sector': info.get('sector', ''),
+            'industry': info.get('industry', ''),
             'country': info.get('country', ''),
             'dividend_streak': calculate_dividend_streak(stock),
             'dividend_yield': round(info.get('dividendYield', 0) * 100, 2),
@@ -163,20 +164,26 @@ def calculate_5y_total_return_rate(stock):
 def calculate_dividend_growth_rate(stock):
     dividends = stock.dat.dividends
 
-    resampled = dividends.resample('YE').sum()
-    if len(resampled) < 1:
-        return 0
-    
-    if resampled.index[-1].date() > date.today():
-        # bypassing the current year as some additional dividends might come and it would break the growth rate 
-        idx = -2
-    else:
-        idx = -1
+    try:
+        resampled = dividends.resample('YE').sum()
+        if len(resampled) < 1:
+            return 0
+        
+        if resampled.index[-1].date() > date.today():
+            # bypassing the current year as some additional dividends might come and it would break the growth rate 
+            idx = -2
+        else:
+            idx = -1
 
-    if len(resampled) < abs(idx) + 5:
+        if len(resampled) < abs(idx) + 5:
+            return 0
+        
+        if resampled.iloc[idx-5] == 0:
+            return 0
+
+        return ((resampled.iloc[idx] / resampled.iloc[idx-5]) ** (1 / 5) - 1) * 100
+    except Exception:
         return 0
-    
-    return ((resampled.iloc[idx] / resampled.iloc[idx-5]) ** (1 / 5) - 1) * 100
 
 # Function to filter bad dividends data in Yahoo Finance
 def filter_wrong_dividends(df):
@@ -217,36 +224,39 @@ def calculate_dividend_streak(stock):
     if type(dividends) != pd.Series :
         return 0
 
-    resampled = dividends.resample('YE').sum()
+    try:
+        resampled = dividends.resample('YE').sum()
 
-    #return 0 if there is no dividend data or if the last dividend happened more than 1 year ago
-    if (len(resampled) < 1) or (date.today() - resampled.index[-1].date() > pd.Timedelta(days=365)):
-        return 0
-    
-    prevprev = 0
-    prev = 0
-    ctr = 0
-    for i in range(len(resampled)-1):
-        if (resampled.iloc[i] >= prev) and (prev > 0):
-            if (i == 0) or (resampled.index[i].date()- resampled.index[i-1].date() < pd.Timedelta(days=380)):
-                ctr += 1
-        else:
-            # try to support the case where there is exceptional dividends in the middle of a streak
-            if(i <= len(resampled)-1):
-                if ((resampled.iloc[i+1] > prev) and (prev > 0)) or ((resampled.iloc[i] > prevprev) and (prevprev > 0)):
-                    if (i == 0) or (resampled.index[i].date()- resampled.index[i-1].date() < pd.Timedelta(days=380)):
-                        ctr += 1
+        #return 0 if there is no dividend data or if the last dividend happened more than 1 year ago
+        if (len(resampled) < 1) or (date.today() - resampled.index[-1].date() > pd.Timedelta(days=365)):
+            return 0
+        
+        prevprev = 0
+        prev = 0
+        ctr = 0
+        for i in range(len(resampled)-1):
+            if (resampled.iloc[i] >= prev) and (prev > 0):
+                if (i == 0) or (resampled.index[i].date()- resampled.index[i-1].date() < pd.Timedelta(days=380)):
+                    ctr += 1
+            else:
+                # try to support the case where there is exceptional dividends in the middle of a streak
+                if(i <= len(resampled)-1):
+                    if ((resampled.iloc[i+1] > prev) and (prev > 0)) or ((resampled.iloc[i] > prevprev) and (prevprev > 0)):
+                        if (i == 0) or (resampled.index[i].date()- resampled.index[i-1].date() < pd.Timedelta(days=380)):
+                            ctr += 1
+                        else:
+                            ctr = 0
                     else:
                         ctr = 0
                 else:
                     ctr = 0
-            else:
-                ctr = 0
-        #print(ctr, resampled.index[i].date())
-        prevprev = prev
-        prev = resampled.iloc[i]
+            #print(ctr, resampled.index[i].date())
+            prevprev = prev
+            prev = resampled.iloc[i]
 
-    return ctr
+        return ctr
+    except Exception:
+        return 0
 
 def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -387,8 +397,11 @@ def highlight_metrics(row, df, spy_return):
 
     
 
-@st.cache_data(ttl=3600*24)
+@st.cache_data(ttl=3600*24, show_spinner=False)
 def load_data(ticker_file):
+    global progress_bar
+    progress_bar = st.progress(0, text="Operation in progress. Please wait.")
+
     stock_tickers = read_stock_tickers(ticker_file)
     stock_tickers_amount = len(stock_tickers)
 
@@ -409,17 +422,16 @@ def load_data(ticker_file):
     sorted_df = stock_df.dropna()  # Remove rows with any missing data
     sorted_df = sorted_df.round(2)  # Round to two decimal places
 
+    progress_bar.empty()
+
     return (sorted_df, spy_return)
 
 def main():
     st.set_page_config(page_title="Stock Screener", layout="wide")
     st.title("Stock Screener")
-    global progress_bar
-    progress_bar = st.progress(0, text="Operation in progress. Please wait.")
 
     (sorted_df, spy_return) = load_data(sys.argv[1])
 
-    progress_bar.empty()
     
     df = filter_dataframe(sorted_df)
     st.dataframe(df.style.apply(highlight_metrics, axis=1, args=(df,spy_return)), use_container_width = True)
