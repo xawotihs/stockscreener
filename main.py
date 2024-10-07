@@ -154,10 +154,16 @@ def calculate_5y_total_return_rate(stock):
             ctr -=1
 
     dividends = stock.dat.dividends
+    if stock.info['previousClose'] / stock_price_5y_ago > 100 and stock.info.get('currency') == 'GBp':
+            stock_price_5y_ago *= 100
+    
+    totalDividend = dividends.loc[fiveYearsAgo.strftime("%Y-%m-%d"):current_time.strftime("%Y-%m-%d")].sum()*(endingRate+initialRate)/2
+
+    #print(totalDividend, endingRate, initialRate, stock_price_5y_ago, stock.info['previousClose'])
 
     return (
         # using avg of rate for dividends and 40% tax, 0% tax for capital gain
-        (dividends.loc[fiveYearsAgo.strftime("%Y-%m-%d"):current_time.strftime("%Y-%m-%d")].sum()*(endingRate+initialRate)/2)*0.6 + 
+        (totalDividend)*0.6 + 
         (endingRate*stock.info['previousClose']) -
         (initialRate*stock_price_5y_ago)
             )/(stock_price_5y_ago*initialRate)
