@@ -40,7 +40,8 @@ def fetch_stock_data(ticker, percent_complete):
 
     try:
         return {
-            'ticker': ticker,
+            #'ticker': f"["+ticker+"](https://finance.yahoo.com/quote/"+ticker+"/)",
+            'ticker': f"https://finance.yahoo.com/quote/"+ticker+"/",
             'name': info.get('shortName', ''),
             'sector': info.get('sector', ''),
             'industry': info.get('industry', ''),
@@ -59,7 +60,7 @@ def fetch_stock_data(ticker, percent_complete):
             'discount/premium':round(discount,2),
             'w13612': round(calculate_13612W(stock), 2),
         }
-    except KeyError:
+    except Exception:
         return None
 
 # Function to calculate w13612 momentum
@@ -439,10 +440,18 @@ def main():
     st.title("Stock Screener")
 
     (sorted_df, spy_return) = load_data(sys.argv[1])
-
     
     df = filter_dataframe(sorted_df)
-    st.dataframe(df.style.apply(highlight_metrics, axis=1, args=(df,spy_return)), use_container_width = True)
+#    df = df.to_markdown()
+    df = df.style.apply(highlight_metrics, axis=1, args=(df,spy_return))
+    st.dataframe(
+        df, 
+        use_container_width = True, 
+        column_config = {"ticker": st.column_config.LinkColumn(
+                "Ticker", max_chars=100, display_text=r"https://finance.yahoo.com/quote/(.*?)/")
+                }, 
+         hide_index=False)
+
 
 
 if __name__ == "__main__":
