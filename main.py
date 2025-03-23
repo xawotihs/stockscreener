@@ -17,26 +17,31 @@ stock_tickers_amount = 0
 
 # Function to fetch stock data
 def fetch_stock_data(ticker, percent_complete):
-    progress_bar.progress(percent_complete, text=f'Fetching data for {ticker}')
+    print(f"Fetching {ticker}")
+    try:
+        progress_bar.progress(percent_complete, text=f'Fetching data for {ticker}')
 
-    stock = yfc.Ticker(ticker)
-    info = stock.info
+        stock = yfc.Ticker(ticker)
+        info = stock.info
 
-    fiveYearAvgDividendYield = stock.info.get('fiveYearAvgDividendYield')
-    dividendRate = stock.info.get('dividendRate')
-    close = stock.info.get('previousClose')
-    fiftyDayAverage = info.get('fiftyDayAverage', '')
-    twoHundredDayAverage = info.get('twoHundredDayAverage', '')
-    if close is None or close == 'N/A':
-        close = 1
-    if fiveYearAvgDividendYield is None or dividendRate is None or fiveYearAvgDividendYield == 'N/A':
-        fiveYearAvgDividendYield = 0
-        discount = 0
-    else:
-        if stock.info.get('currency') != 'GBp':
-            discount = 100*(close-dividendRate/fiveYearAvgDividendYield*100)/(close)
+        fiveYearAvgDividendYield = stock.info.get('fiveYearAvgDividendYield')
+        dividendRate = stock.info.get('dividendRate')
+        close = stock.info.get('previousClose')
+        fiftyDayAverage = info.get('fiftyDayAverage', '')
+        twoHundredDayAverage = info.get('twoHundredDayAverage', '')
+        if close is None or close == 'N/A':
+            close = 1
+        if fiveYearAvgDividendYield is None or dividendRate is None or fiveYearAvgDividendYield == 'N/A':
+            fiveYearAvgDividendYield = 0
+            discount = 0
         else:
-            discount = 100*(close-(dividendRate*100)/fiveYearAvgDividendYield*100)/(close)
+            if stock.info.get('currency') != 'GBp':
+                discount = 100*(close-dividendRate/fiveYearAvgDividendYield*100)/(close)
+            else:
+                discount = 100*(close-(dividendRate*100)/fiveYearAvgDividendYield*100)/(close)
+    except Exception:
+        print(f"Exception with {ticker}")
+        return None
 
     try:
         return {
@@ -61,15 +66,19 @@ def fetch_stock_data(ticker, percent_complete):
             'w13612': round(calculate_13612W(stock), 2),
         }
     except Exception:
+        print(f"Exception with {ticker}")
         return None
 
 # Function to calculate w13612 momentum
 def calculate_13612W(stock):
     current_time = datetime.now()
     until = current_time - timedelta(days = 365+2)
+    print(f"current_time:{current_time}, until:{until}")
 
     try:
-        df = stock.history(start=until.strftime("%Y-%m-%d"), end=current_time.strftime("%Y-%m-%d"), interval="1d")
+        #df = stock.history(start=until.strftime("%Y-%m-%d"), end=current_time.strftime("%Y-%m-%d"), interval="1d")
+        df = stock.history(period = "1y")
+        print(df)
         dfmonthly = df.groupby([pd.Grouper(freq = 'ME')]).last()
 
         w13612 = ((dfmonthly['Close']/dfmonthly['Close'].shift(1)-1)*12+
@@ -154,7 +163,7 @@ def calculate_5y_total_return_rate(stock):
         except Exception:
             ctr -=1
 
-    dividends = stock.dat.dividends
+    dividends = stock._dat.dividends
     if stock.info['previousClose'] / stock_price_5y_ago > 100 and stock.info.get('currency') == 'GBp':
             stock_price_5y_ago *= 100
     
@@ -171,7 +180,7 @@ def calculate_5y_total_return_rate(stock):
 
 # Function to calculate dividend growth rate
 def calculate_dividend_growth_rate(stock):
-    dividends = stock.dat.dividends
+    dividends = stock._dat.dividends
 
     try:
         resampled = dividends.resample('YE').sum()
@@ -226,7 +235,7 @@ def filter_wrong_dividends(df):
 
 # Function to calculate dividend streak
 def calculate_dividend_streak(stock):
-    dividends_df = stock.dat.dividends.to_frame()
+    dividends_df = stock._dat.dividends.to_frame()
     filtered_dividends_df = filter_wrong_dividends(dividends_df)
     dividends = filtered_dividends_df.squeeze()
 
@@ -441,6 +450,8 @@ def main():
 
     (sorted_df, spy_return) = load_data(sys.argv[1])
     
+    print(sorted_df)
+
     df = filter_dataframe(sorted_df)
 #    df = df.to_markdown()
     df = df.style.apply(highlight_metrics, axis=1, args=(df,spy_return))
