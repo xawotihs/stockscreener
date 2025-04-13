@@ -436,12 +436,102 @@ def filter_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 # --- Data Loading and Processing ---
 
+def convert_symbol_to_yfinance(symbol, country):
+    match country:
+        case 'AE':
+            return symbol.upper() + '.AE'
+        case 'AU':
+            return symbol.upper() + '.AX'
+        case 'BE':
+            return symbol.upper() + '.BR'
+        case 'BM':
+            return symbol.upper()
+        case 'BR':
+            return symbol.upper() + '.SA'
+        case 'CA':
+            return symbol.upper() + '.TO'
+        case 'CH':
+            return symbol.upper() + '.SW'
+        case 'CN':
+            return symbol.upper() + '.SS'
+        case 'DE':
+            return symbol.upper() + '.DE'
+        case 'DK':
+            return symbol.upper() + '.CO'
+        case 'ES':
+            return symbol.upper() + '.MC'
+        case 'FI':
+            return symbol.upper() + '.HE'
+        case 'FR':
+            return symbol.upper() + '.PA'
+        case 'GB':
+            return symbol.upper() + '.L'
+        case 'HK':
+            return symbol.upper() + '.HK'
+        case 'ID':
+            return symbol.upper() + '.JK'
+        case 'IN':
+            return symbol.upper() + '.NS'
+        case 'IT':
+            return symbol.upper() + '.MI'
+        case 'JP':
+            return symbol.upper() + '.T'
+        case 'KR':
+            return symbol.upper() + '.KS'
+        case 'KW':
+            return symbol.upper() + '.KW'
+        case 'MX':
+            return symbol.upper() + '.MX'
+        case 'MY':
+            return symbol.upper() + '.KL'
+        case 'NL':
+            return symbol.upper() + '.AS'
+        case 'NO':
+            return symbol.upper() + '.OL'
+        case 'NZ':
+            return symbol.upper() + '.AX'
+        case 'PR':
+            return symbol.upper()
+        case 'QA':
+            return symbol.upper() + '.QA'
+        case 'RU':
+            return symbol.upper() + '.RU'
+        case 'SA':
+            return symbol.upper() + '.SR'
+        case 'SE':
+            return symbol.upper() + '.ST'
+        case 'SG':
+            return symbol.upper() + '.SI'
+        case 'TH':
+            return symbol.upper() + '.BK'
+        case 'TW':
+            return symbol.upper() + '.TW'
+        case 'US':
+            return symbol.upper()
+        case 'ZA':
+            return symbol.upper() + '.JO'
+        case _:
+            raise ValueError(f"Unknown country {country}")
+
+
 # Read stock tickers from file
 def read_stock_tickers(file_path):
+    """Reads tickers from a file. Handles CSV (with 'Symbol' or 'BBG FIGI') or plain text."""
+    tickers = []
     try:
-        with open(file_path, 'r') as file:
-            tickers = [line.strip() for line in file if line.strip()] # Ignore empty lines
-            return tickers
+        if file_path.endswith(".csv"):
+            df = pd.read_csv(file_path, header=0)
+
+            tickers = [convert_symbol_to_yfinance(symbol, country) 
+                        for symbol, country in zip(df['Symbol'], df['Country'])]
+
+        else:
+            # If not a CSV, read it line by line (plain text ticker list)
+            with open(file_path, 'r') as file:
+                tickers = [line.strip() for line in file if line.strip()]
+
+        return tickers
+
     except FileNotFoundError:
         st.error(f"Error: Ticker file not found at {file_path}")
         return []
