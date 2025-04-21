@@ -1,5 +1,6 @@
 import yfinance_cache as yfc
 import pandas as pd
+import numpy as np
 import streamlit as st
 import sys
 import time
@@ -156,6 +157,46 @@ def calculate_5y_total_return_rate(info, history_5y, dividends_5y, currency_rate
         # print(f"Error calculating 5y return for {info.get('symbol', 'N/A')}: {e}\n{traceback.format_exc()}")
         return 0
 
+# Function to calculate EPS growth rate
+def calculate_EPS_growth_rate(stock):
+
+    try:
+        df = stock.income_stmt
+
+        index_end = 0
+        index_start = -1
+
+        end = df.loc['Diluted EPS'].iloc[index_end]
+        while (end == None or np.isnan(end)) and index_end <= len(df.loc['Diluted EPS']):
+            index_end += 1
+            end = df.loc['Diluted EPS'].iloc[index_end]
+
+        start = df.loc['Diluted EPS'].iloc[-1]
+        while (start == None or np.isnan(start)) and index_start >= -1*len(df.loc['Diluted EPS']):
+            index_start -= 1
+            start = df.loc['Diluted EPS'].iloc[index_start]
+
+        #print(f"end: {end}, start: {start}")
+        #print(f"index_end: {index_end}, index_start: {index_start}")
+
+
+        if end*start > 0:
+            # both values are positive or negative
+            growth_rate = (((end) / start) ** (1 / (len(df.loc['Diluted EPS']) - index_end + index_start+1))) - 1
+            #print(f"growth_rate: {growth_rate}")
+            return growth_rate * 100 # Return as percentage
+        else:
+            offset = max(abs(start), abs(end))
+            #print(f"offset: {offset}")
+
+            # both values are positive or negative
+            growth_rate = (((end+offset) / (start+offset)) ** (1 / (len(df.loc['Diluted EPS']) - index_end + index_start+1))) - 1
+            #print(f"growth_rate: {growth_rate}")
+            return growth_rate * 100 # Return as percentage
+
+    except Exception as e:
+        # print(f"Error calculating EPS growth: {e}")
+        return 0
 
 # Function to calculate dividend growth rate
 def calculate_dividend_growth_rate(dividends_all):
@@ -166,24 +207,27 @@ def calculate_dividend_growth_rate(dividends_all):
         dividends_all.index = pd.to_datetime(dividends_all.index)
         resampled = dividends_all.resample('YE').sum()
 
+       #print(resampled)
+
         if len(resampled) < 6: # Need at least 6 years for a 5-year growth calculation
             return 0
 
         # Determine the index for the end year (idx) and start year (idx-5)
         # If the last year is the current year and potentially incomplete, use the previous year as the end year
-        last_year_end_date = resampled.index[-1]
-        if last_year_end_date.year == date.today().year and last_year_end_date.dayofyear < 365:
-             if len(resampled) < 7: # Need 7 years if skipping the last partial year
-                 return 0
-             idx = -2 # Use year before last as end year
+        if resampled.iloc[-1] < resampled.iloc[-2]:
+            idx = -2 # Use year before last as end year
         else:
-             idx = -1 # Use last full year as end year
+            idx = -1     
+        
+        #print(f"idx: {idx}")
 
         end_dividend = resampled.iloc[idx]
         start_dividend = resampled.iloc[idx - 5]
 
         if start_dividend <= 0: # Avoid division by zero or growth from zero
             return 0
+
+        #print(f"{end_dividend}, {start_dividend}")
 
         # CAGR formula: ((Ending Value / Starting Value)^(1 / Number of Years)) - 1
         growth_rate = ((end_dividend / start_dividend) ** (1 / 5)) - 1
@@ -240,24 +284,33 @@ def calculate_dividend_streak(dividends_all):
 
         current_streak = 0
         last_valid_year_dividend = -1 # Track the dividend amount of the last year in the current streak
-
+        last_last_valid_year_dividend = -1
         for year_end_date in resampled.index:
             current_year_dividend = resampled[year_end_date]
 
             # Check for growth or stability compared to the last valid year in the streak
             if current_year_dividend >= last_valid_year_dividend and current_year_dividend > 0:
                  # If it's the first year or consecutive year, increment streak
-                 current_streak += 1
-                 last_valid_year_dividend = current_year_dividend # Update last valid dividend amount
+                current_streak += 1
+                last_last_valid_year_dividend = last_valid_year_dividend
+                last_valid_year_dividend = current_year_dividend # Update last valid dividend amount
             else:
-                 if year_end_date != resampled.index[-1]: # ignore last year in the series as it may be incomplete
-                    # Streak broken, reset, but check if the current year starts a new streak
-                    if current_year_dividend > 0:
-                        current_streak = 1
-                        last_valid_year_dividend = current_year_dividend
+                if year_end_date != resampled.index[-1]: # ignore last year in the series as it may be incomplete
+                    if current_year_dividend >= last_last_valid_year_dividend and current_year_dividend > 0:
+                        # handle exceptional dividends happening only one year
+                        current_streak += 1
+                        last_last_valid_year_dividend = last_valid_year_dividend
+                        last_valid_year_dividend = current_year_dividend # Update last valid dividend amount
                     else:
-                        current_streak = 0
-                        last_valid_year_dividend = -1 # Reset since dividend is zero or negative
+                        # Streak broken, reset, but check if the current year starts a new streak
+                        if current_year_dividend > 0:
+                            current_streak = 1
+                            last_last_valid_year_dividend = last_valid_year_dividend
+                            last_valid_year_dividend = current_year_dividend
+                        else:
+                            current_streak = 0
+                            last_last_valid_year_dividend = -1 # 
+                            last_valid_year_dividend = -1 # Reset since dividend is zero or negative
 
         return current_streak # Final check for the ongoing streak
 
@@ -332,7 +385,7 @@ def fetch_stock_data_single(ticker):
             '5y_Avg_dividend_yield': round(fiveYearAvgDividendYield if fiveYearAvgDividendYield else 0, 2),
             'payout_ratio': round(info.get('payoutRatio', 0), 2),
             'dividend_growth_rate': round(calculate_dividend_growth_rate(dividends_all), 2),
-            'eps': round(info.get('trailingEps', 0), 2),
+            'eps_growth': calculate_EPS_growth_rate(stock),
             'pe_ratio': round(info.get('trailingPE', 0), 2),
             'earning_growth': info.get('earningsGrowth', 0),
             # Pass currency_rates (global) to 5y calculation
@@ -594,7 +647,7 @@ def calculate_metrics(row, spy_return):
         row['dividend_yield'] > 0,
         0.30 <= row['payout_ratio'] <= 0.60,
         row['dividend_growth_rate'] > 10,
-        row['eps'] > 0,
+        row['eps_growth'] > 5,
         row['pe_ratio'] < 20,
         row['debt_to_equity'] < 100,
         row['roe'] > 0.10,
@@ -617,8 +670,8 @@ def highlight_metrics(row, df, spy_return):
             colors.append('background-color: green' if 0.30 <= row[col] <= 0.60 else 'background-color: red')
         elif col == 'dividend_growth_rate':
             colors.append('background-color: green' if row[col] > 10 else 'background-color: red')
-        elif col == 'eps':
-            colors.append('background-color: green' if row[col] > 0 else 'background-color: red')
+        elif col == 'eps_growth':
+            colors.append('background-color: green' if row[col] > 5 else 'background-color: red')
         elif col == 'pe_ratio':
             colors.append('background-color: green' if row[col] < 20 else 'background-color: red')
         elif col == 'debt_to_equity':
